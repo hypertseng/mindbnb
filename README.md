@@ -1,2 +1,2 @@
-# Q4M
+# MindBNB
 quantization for mindnlp
