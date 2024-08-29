@@ -7,13 +7,16 @@ import itertools
 import operator
 import subprocess
 from typing import Any, Dict, Optional, Tuple
-
+import time
 import mindspore.context
 import numpy as np
 import mindspore
 from mindspore import Tensor
 from mindspore import ops
 from mindspore import context
+from mindspore._c_expression import (
+    Tensor as CTensor,
+)  # pylint: disable=no-name-in-module, import-error
 
 from bitsandbytes.utils import pack_dict_to_tensor, unpack_tensor_to_dict
 
@@ -107,7 +110,16 @@ ampere_gpus = [
     "Quadro RTX A4000",
 ]
 
+
+def empty(*size, dtype):
+    if isinstance(size[0], (tuple, list)):
+        size = size[0]
+    out = CTensor(dtype, size)
+    return mindspore.Tensor(out)
+
+
 def get_gpu_name(device:int):
+
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
@@ -124,12 +136,14 @@ def get_gpu_name(device:int):
             "nvidia-smi command not found. Make sure you have NVIDIA drivers installed."
         )
 
+GPU_NAME = get_gpu_name(mindspore.context.get_context("device_id"))
+
 def get_special_format_str():
     device_target = context.get_context("device_target")
     if device_target == "CPU":
         return "col_turing"
 
-    device_name = get_gpu_name(mindspore.context.get_context("device_id"))
+    device_name = GPU_NAME
     if device_name in turing_gpus:
         return "col_turing"
     if device_name in ampere_gpus:
@@ -937,7 +951,7 @@ def dequantize_blockwise(
             absmax = absmax.float()
 
     if out is None:
-        out = Tensor(np.empty(A.shape), dtype=quant_state.dtype,)
+        out = empty(A.shape, dtype=quant_state.dtype,)
 
     if A.device_target != "cpu":
         code = quant_state.code
@@ -1317,7 +1331,7 @@ def dequantize_4bit(
             absmax = absmax.float()
 
     if out is None:
-        out = Tensor(np.empty(quant_state.shape), dtype=quant_state.dtype)
+        out = empty(quant_state.shape, dtype=quant_state.dtype)
 
     n = out.numel()
 
@@ -1923,9 +1937,9 @@ def gemv_4bit(
 
     if out is None:
         if len(A.shape) == 3:
-            out = Tensor(np.empty(size=(A.shape[0], A.shape[1], bout)), dtype=A.dtype)
+            out = empty(size=(A.shape[0], A.shape[1], bout), dtype=A.dtype)
         else:
-            out = Tensor(ops.empty(size=(A.shape[0], bout)), dtype=A.dtype,)
+            out = empty(size=(A.shape[0], bout), dtype=A.dtype,)
 
     n = 1
     m = Bshape[0]
@@ -2207,9 +2221,9 @@ def igemmlt(A, B, SA, SB, out=None, Sout=None, dtype=mindspore.int32):
 
     # if the tensor is empty, return a transformed empty tensor with the right dimensions
     if shapeA[0] == 0 and dimsA == 2:
-        return Tensor(np.empty((0, shapeB[0])), dtype=mindspore.float16)
+        return empty((0, shapeB[0]), dtype=mindspore.float16)
     elif shapeA[1] == 0 and dimsA == 3:
-        return Tensor(np.empty(tuple(shapeA[:2] + [shapeB[0]])), dtype=mindspore.float16)
+        return empty(tuple(shapeA[:2] + [shapeB[0]]), dtype=mindspore.float16)
 
     if dimsA == 2 and out is None:
         out, Sout = get_transform_buffer((shapeA[0], shapeB[0]), dtype, "col32", "row")
@@ -2251,14 +2265,14 @@ def igemmlt(A, B, SA, SB, out=None, Sout=None, dtype=mindspore.int32):
     ptrRowScale = None
     if formatB == "col_turing":
         if dtype == mindspore.int32:
-            has_error = bnbop.cigemmlt_turing_32(m, n, k, A, B, out, ptrRowScale, lda, ldb, ldc)
+            bnbop.cigemmlt_turing_32(m, n, k, A, B, out, ptrRowScale, lda, ldb, ldc, has_error)
         else:
-            has_error = bnbop.cigemmlt_turing_8(m, n, k, A, B, out, ptrRowScale, lda, ldb, ldc)
+            bnbop.cigemmlt_turing_8(m, n, k, A, B, out, ptrRowScale, lda, ldb, ldc, has_error)
     elif formatB == "col_ampere":
         if dtype == mindspore.int32:
-            has_error = bnbop.cigemmlt_ampere_32(m, n, k, A, B, out, ptrRowScale, lda, ldb, ldc)
+            bnbop.cigemmlt_ampere_32(m, n, k, A, B, out, ptrRowScale, lda, ldb, ldc, has_error)
         else:
-            has_error = bnbop.cigemmlt_ampere_8(m, n, k, A, B, out, ptrRowScale, lda, ldb, ldc)
+            bnbop.cigemmlt_ampere_8(m, n, k, A, B, out, ptrRowScale, lda, ldb, ldc, has_error)
 
     if has_error == 100:  # `ERR_NOT_IMPLEMENTED` is defined as 100 in `ops.cu`
         raise NotImplementedError("igemmlt not available (probably built with NO_CUBLASLT)")
@@ -2277,19 +2291,17 @@ def mm_dequant(A, quant_state, row_stats, col_stats, out=None, new_row_stats=Non
     out_shape = quant_state[0]
     if len(out_shape) == 3:
         out_shape = (out_shape[0] * out_shape[1], out_shape[2])
-
     if out is None:
-        out = Tensor(np.empty(out_shape), dtype=mindspore.float16)
+        out = empty(out_shape, dtype=mindspore.float16)
     if new_row_stats is None:
-        new_row_stats = Tensor(np.empty(out_shape[0]), dtype=mindspore.float32,)
+        new_row_stats = empty(out_shape[0], dtype=mindspore.float32,)
     if new_col_stats is None:
-        new_col_stats = Tensor(np.empty(out_shape[1]), dtype=mindspore.float32,)
+        new_col_stats = empty(out_shape[1], dtype=mindspore.float32,)
     assert new_row_stats.shape[0] == row_stats.shape[0], f"{new_row_stats.shape} vs {row_stats.shape}"
     assert new_col_stats.shape[0] == col_stats.shape[0], f"{new_col_stats.shape} vs {col_stats.shape}"
 
     numRows = out_shape[0]
     numCols = out_shape[1]
-
     bnbop.cdequant_mm_int32_fp16(
         A,
         row_stats,
@@ -2318,9 +2330,9 @@ def get_colrow_absmax(A, row_stats=None, col_stats=None, nnz_block_ptr=None, thr
     tiled_rows = ((rows + 15) // 16) * 16
 
     if row_stats is None:
-        row_stats = Tensor(np.empty((rows,)), dtype=mindspore.float32,).fill(-50000.0)
+        row_stats = empty((rows,), dtype=mindspore.float32,).fill(-50000.0)
     if col_stats is None:
-        col_stats = Tensor(np.empty((cols,)), dtype=mindspore.float32,).fill(-50000.0)
+        col_stats = empty((cols,), dtype=mindspore.float32,).fill(-50000.0)
     # if nnz_block_ptr is None and threshold > 0.0:
     if nnz_block_ptr is None and threshold > 0.0:
         nnz_block_ptr = ops.zeros(((tiled_rows * col_tiles) + 1,), dtype=mindspore.int32,)
@@ -2538,7 +2550,7 @@ def transform(A, to_order, from_order="row", out=None, transpose=False, state=No
 
 def spmm_coo(cooA, B, out=None):
     if out is None:
-        out = Tensor(np.empty((cooA.rows, B.shape[1])), dtype=B.dtype)
+        out = empty((cooA.rows, B.shape[1]), dtype=B.dtype)
     nnz = cooA.nnz
     assert cooA.rowidx.numel() == nnz
     assert cooA.colidx.numel() == nnz

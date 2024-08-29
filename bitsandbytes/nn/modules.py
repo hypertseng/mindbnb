@@ -11,6 +11,9 @@ import mindspore
 from mindspore import Tensor, ops, context
 
 from mindnlp.core import nn
+from mindspore._c_expression import (
+    Tensor as CTensor,
+)  # pylint: disable=no-name-in-module, import-error
 
 import bitsandbytes as bnb
 from bitsandbytes.autograd._functions import get_tile_inds, undo_layout
@@ -20,6 +23,14 @@ from bitsandbytes.utils import (
     LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING,
     OutlierTracer,
 )
+
+
+def empty(*size, dtype=None):
+    if isinstance(size[0], (tuple, list)):
+        size = size[0]
+    out = CTensor(dtype, size)
+    return mindspore.Tensor(out)
+
 
 T = TypeVar("T", bound="mindspore.nn.Module")
 
@@ -202,357 +213,6 @@ class Embedding(mindspore.nn.Embedding):
 
         return emb
 
-
-class Params4bit(mindspore.Parameter):
-    def __new__(
-        cls,
-        data: Optional[mindspore.Tensor] = None,
-        requires_grad=False,  # quantized weights should be frozen by default
-        quant_state: Optional[QuantState] = None,
-        blocksize: int = 64,
-        compress_statistics: bool = True,
-        quant_type: str = "fp4",
-        quant_storage: mindspore.dtype = mindspore.uint8,
-        module: Optional["Linear4bit"] = None,
-        bnb_quantized: bool = False,
-    ) -> "Params4bit":
-        if data is None:
-            data = ops.empty(0)
-
-        self = mindspore.Tensor._make_subclass(cls, data, requires_grad)
-        self.blocksize = blocksize
-        self.compress_statistics = compress_statistics
-        self.quant_type = quant_type
-        self.quant_state = quant_state
-        self.quant_storage = quant_storage
-        self.bnb_quantized = bnb_quantized
-        self.data = data
-        self.module = module
-        return self
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        state["data"] = self.data
-        state["requires_grad"] = self.requires_grad
-        return state
-
-    def __setstate__(self, state):
-        self.requires_grad = state["requires_grad"]
-        self.blocksize = state["blocksize"]
-        self.compress_statistics = state["compress_statistics"]
-        self.quant_type = state["quant_type"]
-        self.quant_state = state["quant_state"]
-        self.data = state["data"]
-        self.quant_storage = state["quant_storage"]
-        self.bnb_quantized = state["bnb_quantized"]
-        self.module = state["module"]
-
-    def __deepcopy__(self, memo):
-        new_instance = type(self).__new__(type(self))
-        state = self.__getstate__()
-        new_instance.__setstate__(state)
-        new_instance.quant_state = copy.deepcopy(state["quant_state"])
-        new_instance.data = copy.deepcopy(state["data"])
-        return new_instance
-
-    def __copy__(self):
-        new_instance = type(self).__new__(type(self))
-        state = self.__getstate__()
-        new_instance.__setstate__(state)
-        return new_instance
-
-    @classmethod
-    def from_prequantized(
-        cls,
-        data: mindspore.Tensor,
-        quantized_stats: Dict[str, Any],
-        requires_grad: bool = False,
-        device="cuda",
-        **kwargs,
-    ) -> "Params4bit":
-        self = mindspore.Tensor._make_subclass(cls, data.to(device))
-        self.requires_grad = requires_grad
-        self.quant_state = QuantState.from_dict(qs_dict=quantized_stats, device=device)
-        self.blocksize = self.quant_state.blocksize
-        self.compress_statistics = self.quant_state.nested
-        self.quant_type = self.quant_state.quant_type
-        self.bnb_quantized = True
-        return self
-
-    def _quantize(self, device):
-        w = self.data.contiguous().cuda(device)
-        w_4bit, quant_state = bnb.functional.quantize_4bit(
-            w,
-            blocksize=self.blocksize,
-            compress_statistics=self.compress_statistics,
-            quant_type=self.quant_type,
-            quant_storage=self.quant_storage,
-        )
-        self.data = w_4bit
-        self.quant_state = quant_state
-        if self.module is not None:
-            self.module.quant_state = quant_state
-        self.bnb_quantized = True
-        return self
-
-    # def cuda(self, device: Optional[Union[int, device, str]] = None, non_blocking: bool = False):
-    #     return self.to(device="cuda" if device is None else device, non_blocking=non_blocking)
-
-    @overload
-    def to(
-        self: T,
-        dtype: Optional[Union[Any, str]] = ...,
-        non_blocking: bool = ...,
-    ) -> T: ...
-
-    @overload
-    def to(self: T, dtype: Union[Any, str], non_blocking: bool = ...) -> T: ...
-
-    @overload
-    def to(self: T, tensor: Tensor, non_blocking: bool = ...) -> T: ...
-
-    def to(self, *args, **kwargs):
-        device, dtype, non_blocking, convert_to_format = mindspore._C._nn._parse_to(
-            *args, **kwargs
-        )
-
-        if device is not None and device.type == "cuda" and not self.bnb_quantized:
-            return self._quantize(device)
-        else:
-            if self.quant_state is not None:
-                self.quant_state.to(device)
-
-            new_param = Params4bit(
-                super().to(device=device, dtype=dtype, non_blocking=non_blocking),
-                requires_grad=self.requires_grad,
-                quant_state=self.quant_state,
-                blocksize=self.blocksize,
-                compress_statistics=self.compress_statistics,
-                quant_type=self.quant_type,
-            )
-
-            return new_param
-
-
-class Linear4bit(nn.Linear):
-    """
-    This class is the base module for the 4-bit quantization algorithm presented in [QLoRA](https://arxiv.org/abs/2305.14314).
-    QLoRA 4-bit linear layers uses blockwise k-bit quantization under the hood, with the possibility of selecting various
-    compute datatypes such as FP4 and NF4.
-
-    In order to quantize a linear layer one should first load the original fp16 / bf16 weights into
-    the Linear4bit module, then call `quantized_module.to("cuda")` to quantize the fp16 / bf16 weights.
-
-    Example:
-
-    ```python
-    import torch
-    import torch.nn as nn
-
-    import bitsandbytes as bnb
-    from bnb.nn import Linear4bit
-
-    fp16_model = nn.Sequential(
-        nn.Linear(64, 64),
-        nn.Linear(64, 64)
-    )
-
-    quantized_model = nn.Sequential(
-        Linear4bit(64, 64),
-        Linear4bit(64, 64)
-    )
-
-    quantized_model.load_state_dict(fp16_model.state_dict())
-    quantized_model = quantized_model.to(0) # Quantization happens here
-    ```
-    """
-
-    def __init__(
-        self,
-        input_features,
-        output_features,
-        bias=True,
-        compute_dtype=None,
-        compress_statistics=True,
-        quant_type="fp4",
-        quant_storage=mindspore.uint8,
-        device=None,
-    ):
-        """
-        Initialize Linear4bit class.
-
-        Args:
-            input_features (`str`):
-                Number of input features of the linear layer.
-            output_features (`str`):
-                Number of output features of the linear layer.
-            bias (`bool`, defaults to `True`):
-                Whether the linear class uses the bias term as well.
-        """
-        super().__init__(input_features, output_features, bias, device)
-        self.weight = Params4bit(
-            self.weight.data,
-            requires_grad=False,
-            compress_statistics=compress_statistics,
-            quant_type=quant_type,
-            quant_storage=quant_storage,
-            module=self,
-        )
-        # self.persistent_buffers = []  # TODO consider as way to save quant state
-        self.compute_dtype = compute_dtype
-        self.compute_type_is_set = False
-        self.quant_state = None
-        self.quant_storage = quant_storage
-
-    def set_compute_type(self, x):
-        if x.dtype in [mindspore.float32, mindspore.bfloat16]:
-            # the input is in a dtype that is safe to compute in, we switch
-            # to this type for speed and stability
-            self.compute_dtype = x.dtype
-        elif x.dtype == mindspore.float16:
-            # we take the compoute dtype passed into the layer
-            if self.compute_dtype == mindspore.float32 and (x.numel() == x.shape[-1]):
-                # single batch inference with input torch.float16 and compute_dtype float32 -> slow inference when it could be fast
-                # warn the user about this
-                warnings.warn(
-                    "Input type into Linear4bit is torch.float16, but bnb_4bit_compute_dtype=torch.float32 (default). This will lead to slow inference.",
-                )
-                warnings.filterwarnings("ignore", message=".*inference.")
-            if self.compute_dtype == mindspore.float32 and (x.numel() != x.shape[-1]):
-                warnings.warn(
-                    "Input type into Linear4bit is torch.float16, but bnb_4bit_compute_dtype=torch.float32 (default). This will lead to slow inference or training speed.",
-                )
-                warnings.filterwarnings("ignore", message=".*inference or training")
-
-    def _save_to_state_dict(self, destination, prefix, keep_vars):
-        """
-        save weight and bias,
-        then fill state_dict with components of quant_state
-        """
-        super()._save_to_state_dict(
-            destination, prefix, keep_vars
-        )  # saving weight and bias
-
-        if getattr(self.weight, "quant_state", None) is not None:
-            for k, v in self.weight.quant_state.as_dict(packed=True).items():
-                destination[prefix + "weight." + k] = v if keep_vars else v.detach()
-
-    def forward(self, x: mindspore.Tensor):
-        # weights are cast automatically as Int8Params, but the bias has to be cast manually
-        if self.bias is not None and self.bias.dtype != x.dtype:
-            self.bias.data = self.bias.data.to(x.dtype)
-
-        if getattr(self.weight, "quant_state", None) is None:
-            if getattr(self, "quant_state", None) is not None:
-                # the quant state got lost when the parameter got converted. This happens for example for fsdp
-                # since we registered the module, we can recover the state here
-                assert self.weight.shape[1] == 1
-                if not isinstance(self.weight, Params4bit):
-                    self.weight = Params4bit(
-                        self.weight, quant_storage=self.quant_storage
-                    )
-                self.weight.quant_state = self.quant_state
-            else:
-                print(
-                    "FP4 quantization state not initialized. Please call .cuda() or .to(device) on the LinearFP4 layer first.",
-                )
-        if not self.compute_type_is_set:
-            self.set_compute_type(x)
-            self.compute_type_is_set = True
-
-        inp_dtype = x.dtype
-        if self.compute_dtype is not None:
-            x = x.to(self.compute_dtype)
-
-        bias = None if self.bias is None else self.bias.to(self.compute_dtype)
-        out = bnb.matmul_4bit(
-            x, self.weight.t(), bias=bias, quant_state=self.weight.quant_state
-        )
-
-        out = out.to(inp_dtype)
-
-        return out
-
-
-class LinearFP4(Linear4bit):
-    """
-    Implements the FP4 data type.
-    """
-
-    def __init__(
-        self,
-        input_features,
-        output_features,
-        bias=True,
-        compute_dtype=None,
-        compress_statistics=True,
-        quant_storage=mindspore.uint8,
-        device=None,
-    ):
-        """
-        Args:
-            input_features (`str`):
-                Number of input features of the linear layer.
-            output_features (`str`):
-                Number of output features of the linear layer.
-            bias (`bool`, defaults to `True`):
-                Whether the linear class uses the bias term as well.
-        """
-        super().__init__(
-            input_features,
-            output_features,
-            bias,
-            compute_dtype,
-            compress_statistics,
-            "fp4",
-            quant_storage,
-            device,
-        )
-
-
-class LinearNF4(Linear4bit):
-    """Implements the NF4 data type.
-
-    Constructs a quantization data type where each bin has equal area under a standard normal distribution N(0, 1) that
-    is normalized into the range [-1, 1].
-
-    For more information read the paper: QLoRA: Efficient Finetuning of Quantized LLMs (https://arxiv.org/abs/2305.14314)
-
-    Implementation of the NF4 data type in bitsandbytes can be found in the `create_normal_map` function in
-    the `functional.py` file: https://github.com/TimDettmers/bitsandbytes/blob/main/bitsandbytes/functional.py#L236.
-    """
-
-    def __init__(
-        self,
-        input_features,
-        output_features,
-        bias=True,
-        compute_dtype=None,
-        compress_statistics=True,
-        quant_storage=mindspore.uint8,
-        device=None,
-    ):
-        """
-        Args:
-            input_features (`str`):
-                Number of input features of the linear layer.
-            output_features (`str`):
-                Number of output features of the linear layer.
-            bias (`bool`, defaults to `True`):
-                Whether the linear class uses the bias term as well.
-        """
-        super().__init__(
-            input_features,
-            output_features,
-            bias,
-            compute_dtype,
-            compress_statistics,
-            "nf4",
-            quant_storage,
-            device,
-        )
-
-
 class Int8Params(mindspore.Parameter):
 
     def __new__(
@@ -566,7 +226,7 @@ class Int8Params(mindspore.Parameter):
         **kwargs,
     ):
         if data is None:
-            data = Tensor(np.empty(0))
+            data = empty(0, dtype=mindspore.float16)
 
         obj = super(Int8Params, cls).__new__(cls, data)
         obj.has_fp16_weights = has_fp16_weights
@@ -815,7 +475,7 @@ class Linear8bitLt(nn.Linear):
         self.weight.CB = None
         self.weight.SCB = None
 
-    def forward(self, x: mindspore.Tensor):
+    def construct(self, x: mindspore.Tensor):
         self.state.is_training = self.training
         if self.weight.CB is not None:
             self.init_8bit_state()

@@ -8,7 +8,6 @@ from .autograd._functions import (
     MatmulLtState,
     # bmm_cublas,
     matmul,
-    matmul_4bit,
     # matmul_cublas,
     # mm_cublas,
 )

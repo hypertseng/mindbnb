@@ -5,12 +5,8 @@
 from .modules import (
     Embedding,
     Int8Params,
-    Linear4bit,
     Linear8bitLt,
-    LinearFP4,
-    LinearNF4,
     OutlierAwareLinear,
-    Params4bit,
     StableEmbedding,
     SwitchBackLinearBnb,
 )

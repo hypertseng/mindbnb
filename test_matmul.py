@@ -12,26 +12,28 @@ mindspore.context.set_context(device_target="GPU")
 a = Tensor(np.random.randn(8192, 8192).astype(np.float16))
 b = Tensor(np.random.randn(8192, 8192).astype(np.float16))
 b_ops = b.t()
-for i in range(5):
-    c_old = ops.matmul(a, b_ops)
+# for i in range(5):
+#     c_old = ops.matmul(a, b_ops)
+c_old = ops.matmul(a, b_ops)
 
 start = time.time()
-# _framework_profiler_step_start()
-# profiler = mindspore.Profiler()
+# # _framework_profiler_step_start()
+# # profiler = mindspore.Profiler()
 for i in range(10):
     c_old = ops.matmul(a, b_ops)
-# _framework_profiler_step_end()
+# # _framework_profiler_step_end()
 # c_old = ops.matmul(a, b.t())
 tick = time.time()
 time_ops = tick - start
-for i in range(5):
-    c_new = matmul(a, b)
+# for i in range(5):
+#     c_new = matmul(a, b)
 start = time.time()
+c_new = matmul(a, b)
 _framework_profiler_step_start()
 for i in range(10):
     c_new = matmul(a, b)
-_framework_profiler_step_end()
 # c_new = matmul(a, b)
+_framework_profiler_step_end()
 tick = time.time()
 time_bnb = tick - start
 # profiler.analyse()

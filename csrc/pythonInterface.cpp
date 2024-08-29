@@ -803,7 +803,7 @@ extern "C"
 
 	int custom_cigemmlt_turing_32(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 10)
+		if (nparam != 11)
 			return 1;
 
 		get_context();
@@ -830,14 +830,15 @@ extern "C"
 		int lda = *static_cast<int *>(lda_ptr);
 		int ldb = *static_cast<int *>(ldb_ptr);
 		int ldc = *static_cast<int *>(ldc_ptr);
-		igemmlt_turing_32((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
+		int has_error = igemmlt_turing_32((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
+		params[9] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
 
 		return 0;
 	}
 
 	int custom_cigemmlt_turing_8(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 10)
+		if (nparam != 11)
 			return 1;
 
 		get_context();
@@ -864,14 +865,15 @@ extern "C"
 		int lda = *static_cast<int *>(lda_ptr);
 		int ldb = *static_cast<int *>(ldb_ptr);
 		int ldc = *static_cast<int *>(ldc_ptr);
-		igemmlt_turing_8((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
+		int has_error = igemmlt_turing_8((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
+		params[9] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
 
 		return 0;
 	}
 
 	int custom_cigemmlt_ampere_32(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 10)
+		if (nparam != 11)
 			return 1;
 
 		get_context();
@@ -898,14 +900,15 @@ extern "C"
 		int lda = *static_cast<int *>(lda_ptr);
 		int ldb = *static_cast<int *>(ldb_ptr);
 		int ldc = *static_cast<int *>(ldc_ptr);
-		igemmlt_ampere_32((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
+		int has_error = igemmlt_ampere_32((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
+		params[9] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
 
 		return 0;
 	}
 
 	int custom_cigemmlt_ampere_8(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 10)
+		if (nparam != 11)
 			return 1;
 
 		get_context();
@@ -932,7 +935,8 @@ extern "C"
 		int lda = *static_cast<int *>(lda_ptr);
 		int ldb = *static_cast<int *>(ldb_ptr);
 		int ldc = *static_cast<int *>(ldc_ptr);
-		igemmlt_ampere_8((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
+		int has_error = igemmlt_ampere_8((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
+		params[9] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
 
 		return 0;
 	}

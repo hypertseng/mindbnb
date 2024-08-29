@@ -8,8 +8,18 @@ import mindspore
 from mindspore import ops, Tensor, nn, context
 import subprocess
 import numpy as np
-
+import time
 import bitsandbytes.functional as F
+from mindspore._c_expression import (
+    Tensor as CTensor,
+)  # pylint: disable=no-name-in-module, import-error
+
+
+def empty(*size, dtype=None):
+    if isinstance(size[0], (tuple, list)):
+        size = size[0]
+    out = CTensor(dtype, size)
+    return mindspore.Tensor(out)
 
 # math.prod not compatible with python < 3.8
 def prod(iterable):
@@ -121,7 +131,7 @@ def undo_layout(
 
 class MatMul8bit:
     @staticmethod
-    def forward(ctx, A, B, out=None, quant_type="vector", precision=None):
+    def construct(ctx, A, B, out=None, quant_type="vector", precision=None):
         if precision is None:
             precision = [8, 8, 8]
         if precision[0] != 8:
@@ -232,7 +242,7 @@ import mindspore.context as context
 
 def supports_igemmlt() -> bool:
     """检查当前设备是否支持优化的 int8 内核"""
-    device_name = F.get_gpu_name(context.get_context("device_id"))
+    device_name = F.GPU_NAME
     if device_name not in F.gpus_compute_capability_over_7_5:
         return False
     else:
@@ -317,6 +327,7 @@ class MatMul8bitLt(nn.Cell):
         self.needs_input_grad = [False, False, False, False, False]
 
     def construct(self, A, B, out=None, bias=None, state=MatmulLtState):
+        # time_1 = time.time()
         using_igemmlt = supports_igemmlt() and not state.force_no_igemmlt
         # default of pymindspore behavior if inputs are empty
         self.is_empty = False
@@ -326,17 +337,9 @@ class MatMul8bitLt(nn.Cell):
             self.B = B
             self.bias = bias
             if A.shape[-1] == B.shape[0]:
-                return Tensor(
-                    np.empty(
-                        A.shape[:-1] + B.shape[1:],
-                    )
-                )
+                return empty(A.shape[:-1] + B.shape[1:], dtype=A.dtype)
             else:
-                return Tensor(
-                    np.empty(
-                        A.shape[:-1] + B.shape[:1],
-                    )
-                )
+                return empty(A.shape[:-1] + B.shape[:1], dtype=A.dtype)
 
         # 1. Quantize A
         # 2. Quantize B
@@ -353,7 +356,7 @@ class MatMul8bitLt(nn.Cell):
             warnings.warn(
                 f"MatMul8bitLt: inputs will be cast from {A.dtype} to float16 during quantization"
             )
-
+        # time_2 = time.time()
         # 1. Quantize A
         if len(A.shape) == 3:
             A = A.reshape(-1, A.shape[-1])
@@ -379,7 +382,7 @@ class MatMul8bitLt(nn.Cell):
             if not state.has_fp16_weights and state.CxB is None and using_igemmlt:
                 state.CxB, state.SB = F.transform(state.CB, to_order=formatB)
             subA = None
-
+        # time_3 = time.time()
         # 2. Quantize B
         if state.has_fp16_weights:
             has_grad = True if (getattr(B, "grad", None) is not None) else False
@@ -426,7 +429,7 @@ class MatMul8bitLt(nn.Cell):
             output_shape = (input_shape[0], input_shape[1], shapeB[0])
         else:
             output_shape = (input_shape[0], shapeB[0])
-
+        # time_4 = time.time()
         # 3. Matmul
         if using_igemmlt:
             C32A, SA = F.transform(CA, "col32")
@@ -449,11 +452,11 @@ class MatMul8bitLt(nn.Cell):
             output = output * scb
             if bias is not None:
                 output = output + bias
-
+        # time_5 = time.time()
         # 4. Mixed-precision decomposition matmul
         if coo_tensorA is not None and subA is not None:
             output += ops.matmul(subA, state.subB)
-
+        # time_6 = time.time()
         # 5. Save state
         self.state = state
 
@@ -473,129 +476,17 @@ class MatMul8bitLt(nn.Cell):
             self.tensor_states = (None, None)
 
         clone_func = clone if len(output_shape) == 3 else lambda x: x
+        # time_7 = time.time()
+        # print("prev time: ", time_2 - time_1)
+        # print("1. Quantize A: ", time_3 - time_2)
+        # print("2. Quantize B: ", time_4 - time_3)
+        # print("3. Matmul: ", time_5 - time_4)
+        # print("4. Mixed-precision decomposition matmul: ", time_6 - time_5)
+        # print("5. Save state: ", time_7 - time_6)
+
         return clone_func(output.view(output_shape))
 
-    # @staticmethod
-    # def backward(ctx, grad_output):
-    #     if ctx.is_empty:
-    #         bias_grad = None if ctx.bias is None else torch.zeros_like(ctx.bias)
-    #         return torch.zeros_like(ctx.A), torch.zeros_like(ctx.B), None, bias_grad, None
-    #     req_gradA, req_gradB, _, req_gradBias, _ = ctx.needs_input_grad
-    #     CAt, subA, A = ctx.tensors
-    #     SCAt, idx = ctx.tensor_states
-    #     formatB = ctx.formatB
-    #     state = ctx.state
-    #     grad_A = grad_B = grad_bias = None
-
-    #     if req_gradBias:
-    #         # compute grad_bias first before changing grad_output dtype
-    #         grad_bias = grad_output.sum(0, dtype=ctx.dtype_bias)
-
-    #     # Cast grad_output to fp16
-    #     if len(grad_output.shape) == 3:
-    #         grad_output = grad_output.reshape(-1, grad_output.shape[-1]).contiguous()
-
-    #     Cgrad, Cgradt, SCgrad, SCgradt, coo_tensor = F.double_quant(grad_output.to(torch.float16))
-    #     if req_gradB:
-    #         CxAt, SAt = F.transform(CAt, formatB, transpose=True)
-    #         C32grad, Sgrad = F.transform(Cgradt, "col32", transpose=True)
-    #         gradB32, SgradB32 = F.igemmlt(C32grad, CxAt, Sgrad, SAt)
-    #         grad_B = F.mm_dequant(gradB32, SgradB32, SCgradt, SCAt)
-    #         if state.threshold > 0.0 and subA is not None:
-    #             grad_B[:, idx] += torch.matmul(grad_output.t(), subA)
-
-    #     if req_gradA:
-    #         if state.CBt is not None:
-    #             C32grad, Sgrad = F.transform(Cgrad, "col32")
-    #             if state.CxBt is None:
-    #                 state.CxBt, state.SBt = F.transform(state.CBt, to_order=formatB, transpose=True)
-    #             gradA32, SgradA32 = F.igemmlt(C32grad, state.CxBt, Sgrad, state.SBt)
-    #             grad_A = F.mm_dequant(gradA32, SgradA32, SCgrad, state.SCBt).view(ctx.grad_shape).to(ctx.dtype_A)
-
-    #         elif state.CB is not None:
-    #             CB = state.CB.to(ctx.dtype_A, copy=True).mul_(state.SCB.unsqueeze(1).mul(1.0 / 127.0))
-    #             grad_A = torch.matmul(grad_output, CB).view(ctx.grad_shape).to(ctx.dtype_A)
-    #         elif state.CxB is not None:
-    #             CB = (
-    #                 undo_layout(state.CxB, state.tile_indices)
-    #                 .to(ctx.dtype_A)
-    #                 .mul_(state.SCB.unsqueeze(1).mul(1.0 / 127.0))
-    #             )
-    #             grad_A = torch.matmul(grad_output, CB).view(ctx.grad_shape).to(ctx.dtype_A)
-    #         else:
-    #             raise Exception("State must contain either CBt or CB or CxB matrix for backward")
-
-    #     return grad_A, grad_B, None, grad_bias, None
-
-
-class MatMul4Bit(nn.Cell):
-    # forward is the same, but we added the fallback for pre-turing GPUs
-    # backward is mostly the same, but adds one extra clause (see "elif state.CxB is not None")
-
-    @staticmethod
-    def forward(
-        ctx, A, B, out=None, bias=None, quant_state: Optional[F.QuantState] = None
-    ):
-        # default of pytorch behavior if inputs are empty
-        ctx.is_empty = False
-        if prod(A.shape) == 0:
-            ctx.is_empty = True
-            ctx.A = A
-            ctx.B = B
-            ctx.bias = bias
-            B_shape = quant_state.shape
-            if A.shape[-1] == B_shape[0]:
-                return Tensor(
-                    np.empty(A.shape[:-1] + B_shape[1:]),
-                    dtype=A.dtype,
-                )
-            else:
-                return Tensor(
-                    np.empty(A.shape[:-1] + B_shape[:1]),
-                    dtype=A.dtype,
-                )
-
-        # 1. Dequantize
-        # 2. MatmulnN
-        output = ops.dense(A, F.dequantize_4bit(B, quant_state).to(A.dtype).t(), bias)
-
-        # 3. Save state
-        ctx.state = quant_state
-        ctx.dtype_A, ctx.dtype_B, ctx.dtype_bias = (
-            A.dtype,
-            B.dtype,
-            None if bias is None else bias.dtype,
-        )
-
-        if any(ctx.needs_input_grad[:2]):
-            ctx.tensors = (None, B)
-        else:
-            ctx.tensors = (None, None)
-
-        return output
-
-    # @staticmethod
-    # def backward(ctx, grad_output):
-    #     if ctx.is_empty:
-    #         bias_grad = None if ctx.bias is None else ops.zeros_like(ctx.bias)
-    #         return ops.zeros_like(ctx.A), ops.zeros_like(ctx.B), None, bias_grad, None
-
-    #     req_gradA, _, _, req_gradBias, _ = ctx.needs_input_grad
-    #     _, B = ctx.tensors
-
-    #     grad_A, grad_B, grad_bias = None, None, None
-
-    #     if req_gradBias:
-    #         # compute grad_bias first before changing grad_output dtype
-    #         grad_bias = grad_output.sum(0, dtype=ctx.dtype_bias)
-
-    #     # not supported by PyTorch. TODO: create work-around
-    #     # if req_gradB: grad_B = torch.matmul(grad_output.t(), A)
-    #     if req_gradA:
-    #         grad_A = ops.matmul(grad_output, F.dequantize_4bit(B, ctx.state).to(grad_output.dtype).t())
-
-    #     return grad_A, grad_B, None, grad_bias, None
-
+matmul8bitlt = MatMul8bitLt()
 
 def matmul(
     A: mindspore.Tensor,
@@ -609,28 +500,5 @@ def matmul(
     if threshold > 0.0:
         state.threshold = threshold
     # return MatMul8bitLt(A, B, out, bias, state)
-    x = MatMul8bitLt()
-    return x(A, B, out, bias, state)
+    return matmul8bitlt(A, B, out, bias, state)
 
-
-def matmul_4bit(
-    A: mindspore.Tensor,
-    B: mindspore.Tensor,
-    quant_state: F.QuantState,
-    out: Optional[mindspore.Tensor] = None,
-    bias=None,
-):
-    assert quant_state is not None
-    if A.numel() == A.shape[-1] and A.requires_grad == False:
-        if A.shape[-1] % quant_state.blocksize != 0:
-            warn(
-                f"Some matrices hidden dimension is not a multiple of {quant_state.blocksize} and efficient inference kernels are not supported for these (slow). Matrix input size found: {A.shape}",
-            )
-            return MatMul4Bit.apply(A, B, out, bias, quant_state)
-        else:
-            out = F.gemv_4bit(A, B.t(), out, state=quant_state)
-            if bias is not None:
-                out += bias
-            return out
-    else:
-        return MatMul4Bit.apply(A, B, out, bias, quant_state)

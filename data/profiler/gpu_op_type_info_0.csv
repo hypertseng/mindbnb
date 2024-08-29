@@ -1,6 +1,0 @@
-op_type,type_occurrences,total_time(us),total_proportion,avg_time(us)
-Reshape,15,374.752,0.0063889,24.9835
-MatMul,15,1020.67,0.0174008,68.0448
-FillV2,165,10228.8,0.174384,61.9925
-Equal,15,483.264,0.00823885,32.2176
-Custom,120,46549.2,0.793588,387.91
