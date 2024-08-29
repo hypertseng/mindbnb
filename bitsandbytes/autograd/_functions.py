@@ -11,7 +11,6 @@ import numpy as np
 
 import bitsandbytes.functional as F
 
-
 # math.prod not compatible with python < 3.8
 def prod(iterable):
     return reduce(operator.mul, iterable, 1)
@@ -92,7 +91,9 @@ def get_inverse_transform_indices(
     return permuted_tile_indices
 
 
-def undo_layout(permuted_tensor: mindspore.Tensor, tile_indices: mindspore.Tensor) -> mindspore.Tensor:
+def undo_layout(
+    permuted_tensor: mindspore.Tensor, tile_indices: mindspore.Tensor
+) -> mindspore.Tensor:
     """
     Undo a tiled permutation such as turing or ampere layout
 
@@ -101,18 +102,24 @@ def undo_layout(permuted_tensor: mindspore.Tensor, tile_indices: mindspore.Tenso
     :return: contiguous row-major tensor
     """
     (rows, cols), (tile_rows, tile_cols) = permuted_tensor.shape, tile_indices.shape
-    assert rows % tile_rows == cols % tile_cols == 0, "tensor must contain a whole number of tiles"
+    assert (
+        rows % tile_rows == cols % tile_cols == 0
+    ), "tensor must contain a whole number of tiles"
     tensor = permuted_tensor.reshape(-1, tile_indices.numel()).t()
     outputs = Tensor(
         shape=tensor.shape, dtype=tensor.dtype
     )  # note: not using .index_copy because it was slower on cuda
     outputs[tile_indices.flatten()] = tensor
-    outputs = outputs.reshape(tile_rows, tile_cols, cols // tile_cols, rows // tile_rows)
-    outputs = outputs.permute(3, 0, 2, 1)  # (rows // tile_rows, tile_rows), (cols // tile_cols, tile_cols)
+    outputs = outputs.reshape(
+        tile_rows, tile_cols, cols // tile_cols, rows // tile_rows
+    )
+    outputs = outputs.permute(
+        3, 0, 2, 1
+    )  # (rows // tile_rows, tile_rows), (cols // tile_cols, tile_cols)
     return outputs.reshape(rows, cols).contiguous()
 
 
-class MatMul8bit():
+class MatMul8bit:
     @staticmethod
     def forward(ctx, A, B, out=None, quant_type="vector", precision=None):
         if precision is None:
@@ -225,37 +232,19 @@ import mindspore.context as context
 
 def supports_igemmlt() -> bool:
     """检查当前设备是否支持优化的 int8 内核"""
-    if F.get_device_capability() < (7, 5):
+    device_name = F.get_gpu_name(context.get_context("device_id"))
+    if device_name not in F.gpus_compute_capability_over_7_5:
         return False
-
-    device_name = F.get_device_name()
-    nvidia16_models = (
-        "GTX 1630",
-        "GTX 1650",
-        "GTX 1660",
-    )  # https://en.wikipedia.org/wiki/GeForce_16_series
-    if any(model_name in device_name for model_name in nvidia16_models):
-        return False  # 这些设备在技术上是 cuda 7.5 兼容的，但缺少张量核心
+    else:
+        nvidia16_models = (
+            "NVIDIA GeForce GTX 1630",
+            "NVIDIA GeForce GTX 1650",
+            "NVIDIA GeForce GTX 1660",
+        )  # https://en.wikipedia.org/wiki/GeForce_16_series
+        if any(model_name in device_name for model_name in nvidia16_models):
+            return False  # 这些设备在技术上是 cuda 7.5 兼容的，但缺少张量核心
 
     return True
-
-
-# # Example usage:
-# device_index = "0"  # 假设我们只检查第一个 GPU
-# print(supports_igemmlt(device_index))
-# def supports_igemmlt(device_id: int = 0) -> bool:
-#     """检查设备是否支持优化的 int8 内核"""
-#     if get_device_capability(device_id) < (7, 5):
-#         return False
-#     device_name = get_device_name(device_id)
-#     nvidia16_models = (
-#         "GTX 1630",
-#         "GTX 1650",
-#         "GTX 1660",
-#     )  # https://en.wikipedia.org/wiki/GeForce_16_series
-#     if any(model_name in device_name for model_name in nvidia16_models):
-#         return False  # 这些设备在技术上是 cuda 7.5 兼容的，但缺少张量核心
-#     return True
 
 
 def _get_tile_size(format):
@@ -267,13 +256,15 @@ def _get_tile_size(format):
 
 
 def get_tile_inds(format, device):
-    transform = lambda x: F.transform(x, from_order="row", to_order=format)[0].to(x.device)
+    transform = lambda x: F.transform(x, from_order="row", to_order=format)[0].to(
+        x.device
+    )
     return get_inverse_transform_indices(transform, _get_tile_size(format))
 
 
 @dataclass
-class MatmulLtState():
-    
+class MatmulLtState:
+
     _tile_indices: Optional[mindspore.Tensor] = None
     force_no_igemmlt: bool = False
     CB = None
@@ -297,7 +288,9 @@ class MatmulLtState():
     use_pool = False
     formatB = F.get_special_format_str()
 
-    def reset_grads(self,):
+    def reset_grads(
+        self,
+    ):
         self.CB = None
         self.CxB = None
         self.SB = None
@@ -317,7 +310,9 @@ class MatmulLtState():
 class MatMul8bitLt(nn.Cell):
     # forward is the same, but we added the fallback for pre-turing GPUs
     # backward is mostly the same, but adds one extra clause (see "elif state.CxB is not None")
-    def __init__(self,):
+    def __init__(
+        self,
+    ):
         super().__init__()
         self.needs_input_grad = [False, False, False, False, False]
 
@@ -331,9 +326,17 @@ class MatMul8bitLt(nn.Cell):
             self.B = B
             self.bias = bias
             if A.shape[-1] == B.shape[0]:
-                return Tensor(np.empty(A.shape[:-1] + B.shape[1:],))
+                return Tensor(
+                    np.empty(
+                        A.shape[:-1] + B.shape[1:],
+                    )
+                )
             else:
-                return Tensor(np.empty(A.shape[:-1] + B.shape[:1],))
+                return Tensor(
+                    np.empty(
+                        A.shape[:-1] + B.shape[:1],
+                    )
+                )
 
         # 1. Quantize A
         # 2. Quantize B
@@ -347,12 +350,16 @@ class MatMul8bitLt(nn.Cell):
 
         # Cast A to fp16
         if A.dtype != mindspore.float16:
-            warnings.warn(f"MatMul8bitLt: inputs will be cast from {A.dtype} to float16 during quantization")
+            warnings.warn(
+                f"MatMul8bitLt: inputs will be cast from {A.dtype} to float16 during quantization"
+            )
 
         # 1. Quantize A
         if len(A.shape) == 3:
             A = A.reshape(-1, A.shape[-1])
-        CA, CAt, SCA, SCAt, coo_tensorA = F.double_quant(A.astype(mindspore.float16), threshold=state.threshold)
+        CA, CAt, SCA, SCAt, coo_tensorA = F.double_quant(
+            A.astype(mindspore.float16), threshold=state.threshold
+        )
 
         if state.threshold > 0.0 and coo_tensorA is not None:
             if state.has_fp16_weights:
@@ -452,7 +459,11 @@ class MatMul8bitLt(nn.Cell):
 
         self.formatB = formatB
         self.grad_shape = input_shape
-        self.dtype_A, self.dtype_B, self.dtype_bias = A.dtype, B.dtype, None if bias is None else bias.dtype
+        self.dtype_A, self.dtype_B, self.dtype_bias = (
+            A.dtype,
+            B.dtype,
+            None if bias is None else bias.dtype,
+        )
 
         if any(self.needs_input_grad[:2]):
             self.tensors = (CAt, subA, A)
@@ -522,7 +533,9 @@ class MatMul4Bit(nn.Cell):
     # backward is mostly the same, but adds one extra clause (see "elif state.CxB is not None")
 
     @staticmethod
-    def forward(ctx, A, B, out=None, bias=None, quant_state: Optional[F.QuantState] = None):
+    def forward(
+        ctx, A, B, out=None, bias=None, quant_state: Optional[F.QuantState] = None
+    ):
         # default of pytorch behavior if inputs are empty
         ctx.is_empty = False
         if prod(A.shape) == 0:
@@ -532,9 +545,15 @@ class MatMul4Bit(nn.Cell):
             ctx.bias = bias
             B_shape = quant_state.shape
             if A.shape[-1] == B_shape[0]:
-                return Tensor(np.empty(A.shape[:-1] + B_shape[1:]), dtype=A.dtype,)
+                return Tensor(
+                    np.empty(A.shape[:-1] + B_shape[1:]),
+                    dtype=A.dtype,
+                )
             else:
-                return Tensor(np.empty(A.shape[:-1] + B_shape[:1]), dtype=A.dtype,)
+                return Tensor(
+                    np.empty(A.shape[:-1] + B_shape[:1]),
+                    dtype=A.dtype,
+                )
 
         # 1. Dequantize
         # 2. MatmulnN
@@ -542,7 +561,11 @@ class MatMul4Bit(nn.Cell):
 
         # 3. Save state
         ctx.state = quant_state
-        ctx.dtype_A, ctx.dtype_B, ctx.dtype_bias = A.dtype, B.dtype, None if bias is None else bias.dtype
+        ctx.dtype_A, ctx.dtype_B, ctx.dtype_bias = (
+            A.dtype,
+            B.dtype,
+            None if bias is None else bias.dtype,
+        )
 
         if any(ctx.needs_input_grad[:2]):
             ctx.tensors = (None, B)

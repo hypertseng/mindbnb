@@ -115,7 +115,7 @@ cigemmlt_ampere_8 = ops.Custom(
 )
 
 cdequant_mm_int32_fp16 = ops.Custom(
-    f"{lib_path}:custom_cigemmlt_ampere_64",
+    f"{lib_path}:custom_cdequant_mm_int32_fp16",
     out_shape=([1]),
     out_dtype=mindspore.int32,
     func_type="aot",

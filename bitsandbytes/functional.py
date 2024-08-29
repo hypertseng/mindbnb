@@ -8,6 +8,7 @@ import operator
 import subprocess
 from typing import Any, Dict, Optional, Tuple
 
+import mindspore.context
 import numpy as np
 import mindspore
 from mindspore import Tensor
@@ -18,54 +19,124 @@ from bitsandbytes.utils import pack_dict_to_tensor, unpack_tensor_to_dict
 
 from bitsandbytes import bnbop
 
+gpus_compute_capability_over_7_5 = [
+    # Compute Capability 7.5
+    "Tesla T4",
+    "Quadro T1000",
+    "Quadro T2000",
+    "Quadro RTX 3000",
+    "Quadro RTX 4000",
+    "Quadro RTX 5000",
+    "Quadro RTX 6000",
+    "Quadro RTX 8000",
+    "NVIDIA GeForce GTX 1650",
+    "NVIDIA GeForce GTX 1660",
+    "NVIDIA GeForce GTX 1660 Ti",
+    # Compute Capability 8.0
+    "NVIDIA A100-SXM4-40GB",
+    "NVIDIA A100-SXM4-80GB",
+    "NVIDIA A100-PCIe-40GB",
+    "NVIDIA A100-PCIe-80GB",
+    "NVIDIA GeForce RTX 3070",
+    "NVIDIA GeForce RTX 3080",
+    "NVIDIA GeForce RTX 3090",
+    "NVIDIA GeForce RTX 3080 Ti",
+    "NVIDIA GeForce RTX 3090 Ti",
+    "NVIDIA RTX A40",
+    "NVIDIA RTX A10",
+    # Compute Capability 8.6
+    "NVIDIA GeForce RTX 3050",
+    "NVIDIA GeForce RTX 3060",
+    "NVIDIA GeForce RTX 3060 Ti",
+    "NVIDIA GeForce RTX 3070 Ti",
+    # Compute Capability 8.7
+    "NVIDIA GeForce RTX 4080",
+    "NVIDIA GeForce RTX 4090",
+    "NVIDIA RTX A4500",
+    "NVIDIA RTX A5500",
+    "NVIDIA RTX A6000",
+    # Compute Capability 9.0
+    "NVIDIA H100-SXM5-80GB",
+    "NVIDIA H100-PCIe-80GB",
+    # Compute Capability 9.1
+    "NVIDIA RTX 6000 Ada Generation",
+    # Compute Capability 9.2
+    "NVIDIA RTX 4000 Ada Generation",
+    "NVIDIA RTX 5000 Ada Generation",
+]
 
-def get_device_capability() -> tuple:
-    # 使用 nvidia-smi 获取 GPU 计算能力
-    try:
-        output = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=compute_capability", "--format=csv,noheader"],
-            universal_newlines=True,
-        )
-        capabilities = output.splitlines()
-        # 假设使用第一个 GPU
-        major, minor = map(int, capabilities[0].split("."))
-        return (major, minor)
-    except subprocess.CalledProcessError as e:
-        print(f"Error while getting device capability: {e}")
-        return (0, 0)  # 默认返回 0, 0 表示不支持
+turing_gpus = [
+    # GeForce RTX 20 Series
+    "NVIDIA GeForce RTX 2080 Ti",
+    "NVIDIA GeForce RTX 2080 Super",
+    "NVIDIA GeForce RTX 2080",
+    "NVIDIA GeForce RTX 2070 Super",
+    "NVIDIA GeForce RTX 2070",
+    "NVIDIA GeForce RTX 2060 Super",
+    "NVIDIA GeForce RTX 2060",
+    
+    # GeForce GTX 16 Series
+    "NVIDIA GeForce GTX 1660 Ti",
+    "NVIDIA GeForce GTX 1660 Super",
+    "NVIDIA GeForce GTX 1660",
+    "NVIDIA GeForce GTX 1650 Super",
+    "NVIDIA GeForce GTX 1650",
+    
+    # Quadro RTX Series
+    "Quadro RTX 8000",
+    "Quadro RTX 6000",
+    "Quadro RTX 5000",
+    "Quadro RTX 4000",
+    
+    # Titan RTX
+    "Titan RTX"
+]
 
-def get_device_name() -> str:
-    # 使用 nvidia-smi 获取 GPU 名称
+ampere_gpus = [
+    # GeForce RTX 30 Series
+    "NVIDIA GeForce RTX 3090",
+    "NVIDIA GeForce RTX 3080 Ti",
+    "NVIDIA GeForce RTX 3080",
+    "NVIDIA GeForce RTX 3070 Ti",
+    "NVIDIA GeForce RTX 3070",
+    "NVIDIA GeForce RTX 3060 Ti",
+    "NVIDIA GeForce RTX 3060",
+    # Quadro RTX Series
+    "Quadro RTX A6000",
+    "Quadro RTX A5000",
+    "Quadro RTX A4000",
+]
+
+def get_gpu_name(device:int):
     try:
-        output = subprocess.check_output(
+        result = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            universal_newlines=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
-        device_names = output.splitlines()
-        return device_names[0]  # 假设使用第一个 GPU
-    except subprocess.CalledProcessError as e:
-        print(f"Error while getting device name: {e}")
-        return ""
-    
+        if result.returncode != 0:
+            raise RuntimeError(f"nvidia-smi error: {result.stderr}")
+        gpu_name = result.stdout.strip()
+        return gpu_name.split("\n")[device]
+    except FileNotFoundError:
+        return (
+            "nvidia-smi command not found. Make sure you have NVIDIA drivers installed."
+        )
+
 def get_special_format_str():
-    try:
-        # 检查是否有可用的 GPU
-        output = subprocess.check_output(
-            ['nvidia-smi', '--query-gpu=gpu_name', '--format=csv,noheader'],
-            universal_newlines=True
-        )
-        if not output:
-            return "col_turing"
-        
-        major, _minor = get_device_capability()
-        if major <= 7:
-            return "col_turing"
-        if major == 8:
-            return "col_ampere"
+    device_target = context.get_context("device_target")
+    if device_target == "CPU":
         return "col_turing"
-    
-    except subprocess.CalledProcessError:
+
+    device_name = get_gpu_name(mindspore.context.get_context("device_id"))
+    if device_name in turing_gpus:
         return "col_turing"
+    if device_name in ampere_gpus:
+        return "col_ampere"
+
+    return "col_turing"
+
 
 # math.prod not compatible with python < 3.8
 def prod(iterable):

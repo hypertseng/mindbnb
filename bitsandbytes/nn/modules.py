@@ -5,11 +5,12 @@
 import copy
 from typing import Any, Dict, Optional, TypeVar, Union, overload
 import warnings
+import numpy as np
 
 import mindspore
-from mindspore import Tensor, dtype, nn, ops
+from mindspore import Tensor, ops, context
 
-from mindnlp.nn.
+from mindnlp.core import nn
 
 import bitsandbytes as bnb
 from bitsandbytes.autograd._functions import get_tile_inds, undo_layout
@@ -311,7 +312,9 @@ class Params4bit(mindspore.Parameter):
     def to(self: T, tensor: Tensor, non_blocking: bool = ...) -> T: ...
 
     def to(self, *args, **kwargs):
-        device, dtype, non_blocking, convert_to_format = mindspore._C._nn._parse_to(*args, **kwargs)
+        device, dtype, non_blocking, convert_to_format = mindspore._C._nn._parse_to(
+            *args, **kwargs
+        )
 
         if device is not None and device.type == "cuda" and not self.bnb_quantized:
             return self._quantize(device)
@@ -331,7 +334,7 @@ class Params4bit(mindspore.Parameter):
             return new_param
 
 
-class Linear4bit(nn.Dense):
+class Linear4bit(nn.Linear):
     """
     This class is the base module for the 4-bit quantization algorithm presented in [QLoRA](https://arxiv.org/abs/2305.14314).
     QLoRA 4-bit linear layers uses blockwise k-bit quantization under the hood, with the possibility of selecting various
@@ -426,7 +429,9 @@ class Linear4bit(nn.Dense):
         save weight and bias,
         then fill state_dict with components of quant_state
         """
-        super()._save_to_state_dict(destination, prefix, keep_vars)  # saving weight and bias
+        super()._save_to_state_dict(
+            destination, prefix, keep_vars
+        )  # saving weight and bias
 
         if getattr(self.weight, "quant_state", None) is not None:
             for k, v in self.weight.quant_state.as_dict(packed=True).items():
@@ -443,7 +448,9 @@ class Linear4bit(nn.Dense):
                 # since we registered the module, we can recover the state here
                 assert self.weight.shape[1] == 1
                 if not isinstance(self.weight, Params4bit):
-                    self.weight = Params4bit(self.weight, quant_storage=self.quant_storage)
+                    self.weight = Params4bit(
+                        self.weight, quant_storage=self.quant_storage
+                    )
                 self.weight.quant_state = self.quant_state
             else:
                 print(
@@ -458,7 +465,9 @@ class Linear4bit(nn.Dense):
             x = x.to(self.compute_dtype)
 
         bias = None if self.bias is None else self.bias.to(self.compute_dtype)
-        out = bnb.matmul_4bit(x, self.weight.t(), bias=bias, quant_state=self.weight.quant_state)
+        out = bnb.matmul_4bit(
+            x, self.weight.t(), bias=bias, quant_state=self.weight.quant_state
+        )
 
         out = out.to(inp_dtype)
 
@@ -545,6 +554,7 @@ class LinearNF4(Linear4bit):
 
 
 class Int8Params(mindspore.Parameter):
+
     def __new__(
         cls,
         data=None,
@@ -552,33 +562,20 @@ class Int8Params(mindspore.Parameter):
         has_fp16_weights=False,
         CB=None,
         SCB=None,
+        *args,
+        **kwargs,
     ):
         if data is None:
-            data = ops.empty(0)
-        obj = mindspore.Tensor._make_subclass(cls, data, requires_grad)
+            data = Tensor(np.empty(0))
+
+        obj = super(Int8Params, cls).__new__(cls, data)
+        obj.has_fp16_weights = has_fp16_weights
         obj.CB = CB
         obj.SCB = SCB
-        obj.has_fp16_weights = has_fp16_weights
         return obj
 
-    def cuda(self, device):
-        if self.has_fp16_weights:
-            return super().cuda(device)
-        else:
-            # we store the 8-bit rows-major weight
-            # we convert this weight to the turning/ampere weight during the first inference pass
-            B = self.data.contiguous().half().cuda(device)
-            CB, CBt, SCB, SCBt, coo_tensorB = bnb.functional.double_quant(B)
-            del CBt
-            del SCBt
-            self.data = CB
-            self.CB = CB
-            self.SCB = SCB
-
-        return self
-
     def __deepcopy__(self, memo):
-        # adjust this if new arguments are added to the constructor
+        # Perform deep copy of the instance
         new_instance = type(self).__new__(
             type(self),
             data=copy.deepcopy(self.data, memo),
@@ -589,37 +586,49 @@ class Int8Params(mindspore.Parameter):
         )
         return new_instance
 
-    @overload
-    def to(
-        self: T,
-        dtype: Optional[Union[Any, str]] = ...,
-        non_blocking: bool = ...,
-    ) -> T: ...
+    def cuda(self,):
+        if self.has_fp16_weights:
+            # 转换数据类型到 FP16
+            self.data.astype(mindspore.float16)
+            return self
+        else:
+            # we store the 8-bit rows-major weight
+            # we convert this weight to the turning/ampere weight during the first inference pass
+            B = self.data.astype(mindspore.float16)
+            CB, CBt, SCB, SCBt, coo_tensorB = bnb.functional.double_quant(B)
+            del CBt
+            del SCBt
+            self.data = CB
+            self.CB = CB
+            self.SCB = SCB
 
-    @overload
-    def to(self: T, dtype: Union[Any, str], non_blocking: bool = ...) -> T: ...
-
-    @overload
-    def to(self: T, tensor: Tensor, non_blocking: bool = ...) -> T: ...
+        return self
 
     def to(self, *args, **kwargs):
-        device, dtype, non_blocking, convert_to_format = mindspore._C._nn._parse_to(*args, **kwargs)
+        dtype = kwargs.get("dtype", None)
+        non_blocking = kwargs.get("non_blocking", False)
 
-        if device is not None and device.type == "cuda" and self.data.device.type == "cpu":
-            return self.cuda(device)
-        else:
-            new_param = Int8Params(
-                super().to(device=device, dtype=dtype, non_blocking=non_blocking),
-                requires_grad=self.requires_grad,
-                has_fp16_weights=self.has_fp16_weights,
-            )
-            new_param.CB = self.CB
-            new_param.SCB = self.SCB
+        self.cuda()
+        new_param = Int8Params(
+            super().to(dtype=dtype, non_blocking=non_blocking),
+            requires_grad=self.requires_grad,
+            has_fp16_weights=self.has_fp16_weights,
+        )
+        new_param.CB = self.CB
+        new_param.SCB = self.SCB
 
-            return new_param
+        return new_param
 
 
-def maybe_rearrange_weight(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+def maybe_rearrange_weight(
+    state_dict,
+    prefix,
+    local_metadata,
+    strict,
+    missing_keys,
+    unexpected_keys,
+    error_msgs,
+):
     weight = state_dict.get(f"{prefix}weight")
     if weight is None:
         # if the state dict has no weights for this layer (e.g., LoRA finetuning), do nothing
@@ -631,9 +640,15 @@ def maybe_rearrange_weight(state_dict, prefix, local_metadata, strict, missing_k
 
     # For new weights format storage type, we explicitly check
     # if weights_format is on the mapping
-    if isinstance(weight_format, int) and weight_format not in INVERSE_LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING:
+    if (
+        isinstance(weight_format, int)
+        and weight_format not in INVERSE_LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING
+    ):
         raise ValueError(f"Expected supported weight format - got {weight_format}")
-    elif isinstance(weight_format, int) and weight_format in INVERSE_LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING:
+    elif (
+        isinstance(weight_format, int)
+        and weight_format in INVERSE_LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING
+    ):
         weight_format = INVERSE_LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING[weight_format]
 
     if weight_format != "row":
@@ -641,7 +656,7 @@ def maybe_rearrange_weight(state_dict, prefix, local_metadata, strict, missing_k
         state_dict[f"{prefix}weight"] = undo_layout(weight, tile_indices)
 
 
-class Linear8bitLt(nn.Dense):
+class Linear8bitLt(nn.Linear):
     """
     This class is the base module for the [LLM.int8()](https://arxiv.org/abs/2208.07339) algorithm.
     To read more about it, have a look at the paper.
@@ -682,7 +697,6 @@ class Linear8bitLt(nn.Dense):
         memory_efficient_backward=False,
         threshold=0.0,
         index=None,
-        device=None,
     ):
         """
         Initialize Linear8bitLt class.
@@ -696,7 +710,9 @@ class Linear8bitLt(nn.Dense):
                 Whether the linear class uses the bias term as well.
         """
         super().__init__(input_features, output_features, bias)
-        assert not memory_efficient_backward, "memory_efficient_backward is no longer required and the argument is deprecated in 0.37.0 and will be removed in 0.39.0"
+        assert (
+            not memory_efficient_backward
+        ), "memory_efficient_backward is no longer required and the argument is deprecated in 0.37.0 and will be removed in 0.39.0"
         self.state = bnb.MatmulLtState()
         self.index = index
 
@@ -706,8 +722,11 @@ class Linear8bitLt(nn.Dense):
         if threshold > 0.0 and not has_fp16_weights:
             self.state.use_pool = True
 
-        self.weight = Int8Params(self.weight.data, has_fp16_weights=has_fp16_weights, requires_grad=has_fp16_weights)
-        self._register_load_state_dict_pre_hook(maybe_rearrange_weight)
+        self.weight = Int8Params(
+            self.weight.data,
+            requires_grad=has_fp16_weights,
+            has_fp16_weights=has_fp16_weights,
+        )
 
     def _save_to_state_dict(self, destination, prefix, keep_vars):
         super()._save_to_state_dict(destination, prefix, keep_vars)
@@ -727,13 +746,19 @@ class Linear8bitLt(nn.Dense):
 
         if not self.state.has_fp16_weights:
             if param_from_weight is not None:
-                destination[key_name] = param_from_weight if keep_vars else param_from_weight.detach()
+                destination[key_name] = (
+                    param_from_weight if keep_vars else param_from_weight.detach()
+                )
                 destination[format_name] = mindspore.tensor(0, dtype=mindspore.uint8)
             elif param_from_state is not None and not layout_reordered:
-                destination[key_name] = param_from_state if keep_vars else param_from_state.detach()
+                destination[key_name] = (
+                    param_from_state if keep_vars else param_from_state.detach()
+                )
                 destination[format_name] = mindspore.tensor(0, dtype=mindspore.uint8)
             elif param_from_state is not None:
-                destination[key_name] = param_from_state if keep_vars else param_from_state.detach()
+                destination[key_name] = (
+                    param_from_state if keep_vars else param_from_state.detach()
+                )
                 weights_format = self.state.formatB
                 # At this point `weights_format` is an str
                 if weights_format not in LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING:
@@ -741,7 +766,9 @@ class Linear8bitLt(nn.Dense):
 
                 weights_format = LINEAR_8BIT_WEIGHTS_FORMAT_MAPPING[weights_format]
 
-                destination[format_name] = mindspore.tensor(weights_format, dtype=mindspore.uint8)
+                destination[format_name] = mindspore.tensor(
+                    weights_format, dtype=mindspore.uint8
+                )
 
     def _load_from_state_dict(
         self,
@@ -795,7 +822,7 @@ class Linear8bitLt(nn.Dense):
 
         # weights are cast automatically as Int8Params, but the bias has to be cast manually
         if self.bias is not None and self.bias.dtype != x.dtype:
-            self.bias.data = self.bias.data.to(x.dtype)
+            self.bias = mindspore.Parameter(self.bias.astype(x.dtype), requires_grad=self.bias.requires_grad)
 
         out = bnb.matmul(x, self.weight, bias=self.bias, state=self.state)
 
@@ -808,23 +835,29 @@ class Linear8bitLt(nn.Dense):
         return out
 
 
-class OutlierAwareLinear(nn.Dense):
+class OutlierAwareLinear(nn.Linear):
     def __init__(self, input_features, output_features, bias=True):
         super().__init__(input_features, output_features, bias)
         self.outlier_dim = None
         self.is_quantized = False
 
     def forward_with_outliers(self, x, outlier_idx):
-        raise NotImplementedError("Please override the `forward_with_outliers(self, x, outlier_idx)` function")
+        raise NotImplementedError(
+            "Please override the `forward_with_outliers(self, x, outlier_idx)` function"
+        )
 
     def quantize_weight(self, w, outlier_idx):
-        raise NotImplementedError("Please override the `quantize_weights(self, w, outlier_idx)` function")
+        raise NotImplementedError(
+            "Please override the `quantize_weights(self, w, outlier_idx)` function"
+        )
 
     def forward(self, x):
         if self.outlier_dim is None:
             tracer = OutlierTracer.get_instance()
             if not tracer.is_initialized():
-                print("Please use OutlierTracer.initialize(model) before using the OutlierAwareLinear layer")
+                print(
+                    "Please use OutlierTracer.initialize(model) before using the OutlierAwareLinear layer"
+                )
             outlier_idx = tracer.get_outliers(self.weight)
             # print(outlier_idx, tracer.get_hvalue(self.weight))
             self.outlier_dim = outlier_idx
@@ -835,7 +868,7 @@ class OutlierAwareLinear(nn.Dense):
             self.is_quantized = True
 
 
-class SwitchBackLinearBnb(nn.Dense):
+class SwitchBackLinearBnb(nn.Linear):
     def __init__(
         self,
         input_features,
@@ -857,7 +890,11 @@ class SwitchBackLinearBnb(nn.Dense):
         if threshold > 0.0 and not has_fp16_weights:
             self.state.use_pool = True
 
-        self.weight = Int8Params(self.weight.data, has_fp16_weights=has_fp16_weights, requires_grad=has_fp16_weights)
+        self.weight = Int8Params(
+            self.weight.data,
+            has_fp16_weights=has_fp16_weights,
+            requires_grad=has_fp16_weights,
+        )
 
     def init_8bit_state(self):
         self.state.CB = self.weight.CB
@@ -871,4 +908,7 @@ class SwitchBackLinearBnb(nn.Dense):
         if self.weight.CB is not None:
             self.init_8bit_state()
 
-        out = bnb.matmul_mixed(x.half(), self.weight.half(), bias=None, state=self.state) + self.bias
+        out = (
+            bnb.matmul_mixed(x.half(), self.weight.half(), bias=None, state=self.state)
+            + self.bias
+        )
