@@ -3,6 +3,6 @@ setuptools>=63
 pytest~=8.2.2
 einops~=0.8.0
 wheel~=0.43.0
-scipy~=1.14.0
+scipy~=1.13.0
 pandas~=2.2.2
 matplotlib~=3.9.1

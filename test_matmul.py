@@ -27,8 +27,8 @@ tick = time.time()
 time_ops = tick - start
 # for i in range(5):
 #     c_new = matmul(a, b)
-start = time.time()
 c_new = matmul(a, b)
+start = time.time()
 _framework_profiler_step_start()
 for i in range(10):
     c_new = matmul(a, b)

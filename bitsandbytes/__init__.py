@@ -6,10 +6,7 @@
 from . import utils
 from .autograd._functions import (
     MatmulLtState,
-    # bmm_cublas,
     matmul,
-    # matmul_cublas,
-    # mm_cublas,
 )
 from .nn import modules
 

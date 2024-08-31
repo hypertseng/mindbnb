@@ -213,6 +213,7 @@ class Embedding(mindspore.nn.Embedding):
 
         return emb
 
+
 class Int8Params(mindspore.Parameter):
 
     def __new__(
@@ -229,9 +230,15 @@ class Int8Params(mindspore.Parameter):
             data = empty(0, dtype=mindspore.float16)
 
         obj = super(Int8Params, cls).__new__(cls, data)
+        obj.__init__(data, requires_grad=requires_grad, *args, **kwargs)
+        # parent_class = Int8Params.__bases__[0]
+        # super(parent_class, obj).__init__(data, requires_grad, *args, **kwargs)
+
+        # 初始化子类属性
         obj.has_fp16_weights = has_fp16_weights
         obj.CB = CB
         obj.SCB = SCB
+
         return obj
 
     def __deepcopy__(self, memo):
@@ -245,39 +252,6 @@ class Int8Params(mindspore.Parameter):
             SCB=copy.deepcopy(self.SCB, memo),
         )
         return new_instance
-
-    def cuda(self,):
-        if self.has_fp16_weights:
-            # 转换数据类型到 FP16
-            self.data.astype(mindspore.float16)
-            return self
-        else:
-            # we store the 8-bit rows-major weight
-            # we convert this weight to the turning/ampere weight during the first inference pass
-            B = self.data.astype(mindspore.float16)
-            CB, CBt, SCB, SCBt, coo_tensorB = bnb.functional.double_quant(B)
-            del CBt
-            del SCBt
-            self.data = CB
-            self.CB = CB
-            self.SCB = SCB
-
-        return self
-
-    def to(self, *args, **kwargs):
-        dtype = kwargs.get("dtype", None)
-        non_blocking = kwargs.get("non_blocking", False)
-
-        self.cuda()
-        new_param = Int8Params(
-            super().to(dtype=dtype, non_blocking=non_blocking),
-            requires_grad=self.requires_grad,
-            has_fp16_weights=self.has_fp16_weights,
-        )
-        new_param.CB = self.CB
-        new_param.SCB = self.SCB
-
-        return new_param
 
 
 def maybe_rearrange_weight(
@@ -475,14 +449,44 @@ class Linear8bitLt(nn.Linear):
         self.weight.CB = None
         self.weight.SCB = None
 
-    def construct(self, x: mindspore.Tensor):
+    def quant(
+        self,
+    ):
+        for key, param in self.parameters_dict().items():
+            if param is None:
+                continue
+            else:
+                if key == "weight":
+                    self.cuda(self.weight)
+        return self
+
+    def cuda(self, param):
+        if param.has_fp16_weights:
+            param.data.astype(mindspore.float16)
+            return self
+        else:
+            # we store the 8-bit rows-major weight
+            # we convert this weight to the turning/ampere weight during the first inference pass
+            B = param.data.astype(mindspore.float16)
+            CB, CBt, SCB, SCBt, coo_tensorB = bnb.functional.double_quant(B)
+            del CBt
+            del SCBt
+            param.set_data(CB)
+            param.CB = CB
+            param.SCB = SCB
+
+        return self
+
+    def forward(self, x: mindspore.Tensor):
         self.state.is_training = self.training
         if self.weight.CB is not None:
             self.init_8bit_state()
 
         # weights are cast automatically as Int8Params, but the bias has to be cast manually
         if self.bias is not None and self.bias.dtype != x.dtype:
-            self.bias = mindspore.Parameter(self.bias.astype(x.dtype), requires_grad=self.bias.requires_grad)
+            self.bias = mindspore.Parameter(
+                self.bias.astype(x.dtype), requires_grad=self.bias.requires_grad
+            )
 
         out = bnb.matmul(x, self.weight, bias=self.bias, state=self.state)
 
@@ -491,7 +495,7 @@ class Linear8bitLt(nn.Linear):
                 # we converted 8-bit row major to turing/ampere format in the first inference pass
                 # we no longer need the row-major weight
                 del self.state.CB
-                self.weight.data = self.state.CxB
+                self.weight.set_data(self.state.CxB)
         return out
 
 
