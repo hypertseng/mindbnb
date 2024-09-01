@@ -10,10 +10,18 @@ np.random.seed(42)
 mindspore.set_seed(42)
 mindspore.context.set_context(device_target="GPU", pynative_synchronize=True)
 
-int8_model = Linear8bitLt(4, 4, has_fp16_weights=False)
+int8_model = Linear8bitLt(4, 2, has_fp16_weights=False)
+
+weight = Tensor([[1, 2, 3, 4], [5, 6, 7, 8]], dtype=mindspore.float16)
+bias = Tensor([1, 2], dtype=mindspore.float16)
+
+int8_model.weight.set_data(weight)
+int8_model.bias.set_data(bias)
+
 int8_model.quant()
 
-input_data = Tensor(np.random.randn(1, 4).astype(np.float16))
+input_data = Tensor([[1, 2, 3, 4], [5, 6, 7, 8]], dtype=mindspore.float16)
+
 int8_output = int8_model(input_data)
 
 print(int8_output)

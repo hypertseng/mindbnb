@@ -495,7 +495,7 @@ class Linear8bitLt(nn.Linear):
                 # we converted 8-bit row major to turing/ampere format in the first inference pass
                 # we no longer need the row-major weight
                 del self.state.CB
-                self.weight.set_data(self.state.CxB)
+                self.weight = self.weight.assign_value(self.state.CxB)
         return out
 
 
