@@ -440,7 +440,7 @@ class MatMul8bitLt(nn.Cell):
                 output = output.to(A.dtype)
             else:  # apply bias separately
                 output = F.mm_dequant(out32, Sout32, SCA, state.SCB, bias=None)
-                output = output.to(A.dtype).add_(bias)
+                output = output.to(A.dtype) + bias 
 
         else:
             A_wo_outliers = A.copy()

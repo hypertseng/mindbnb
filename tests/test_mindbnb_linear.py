@@ -1,3 +1,8 @@
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import mindspore.context
 import numpy as np
 import mindspore
@@ -15,8 +20,8 @@ int8_model = Linear8bitLt(4, 2, has_fp16_weights=False)
 weight = Tensor([[1, 2, 3, 4], [5, 6, 7, 8]], dtype=mindspore.float16)
 bias = Tensor([1, 2], dtype=mindspore.float16)
 
-int8_model.weight.set_data(weight)
-int8_model.bias.set_data(bias)
+int8_model.weight.assign_value(weight)
+int8_model.bias.assign_value(bias)
 
 int8_model.quant()
 

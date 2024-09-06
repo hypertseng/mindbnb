@@ -3,9 +3,14 @@ import shlex
 import subprocess
 from typing import Tuple
 
+import mindspore
+from mindspore import ops
+
+from mindnlp.core import nn
+
 
 def outlier_hook(module, input):
-    assert isinstance(module, torch.nn.Linear)
+    assert isinstance(module, nn.Linear)
     tracer = OutlierTracer.get_instance()
     hvalue = tracer.get_hvalue(module.weight)
     if hvalue not in tracer.hvalue2outlier_idx:
@@ -28,9 +33,9 @@ def outlier_hook(module, input):
             # (1) zscore test of std of hidden dimension
             outlier_idx = find_outlier_dims(merged, reduction_dim=1, zscore=3)
             # (2) magnitude > 6 test
-            dims = (torch.abs(input[0]) > 6).sum(dim=list(range(len(input[0].shape) - 1)))
-            outlier_idx2 = torch.where(dims > 0)[0]
-            outlier_idx = torch.cat([outlier_idx, outlier_idx2]).unique()
+            dims = (ops.abs(input[0]) > 6).sum(dim=list(range(len(input[0].shape) - 1)))
+            outlier_idx2 = ops.where(dims > 0)[0]
+            outlier_idx = ops.cat([outlier_idx, outlier_idx2]).unique()
             tracer.hvalue2outlier_idx[hvalue] = outlier_idx
     else:
         for hook in tracer.hooks:
@@ -53,7 +58,7 @@ class OutlierTracer:
         self.hooks = []
 
         for n, m in model.named_modules():
-            if isinstance(m, torch.nn.Linear):
+            if isinstance(m, nn.Linear):
                 self.hooks.append(m.register_forward_pre_hook(outlier_hook))
 
     def is_initialized(self):
@@ -81,7 +86,7 @@ class OutlierTracer:
 
 def find_outlier_dims(weight, reduction_dim=0, zscore=4.0, topk=None, rdm=False):
     if rdm:
-        return torch.randint(0, weight.shape[1], size=(topk,), device=weight.device).long()
+        return ops.randint(0, weight.shape[1], size=(topk,), device=weight.device).long()
 
     m = weight.mean(reduction_dim)
     mm = m.mean()
@@ -95,9 +100,9 @@ def find_outlier_dims(weight, reduction_dim=0, zscore=4.0, topk=None, rdm=False)
     zstd = (std - stdm) / stdstd
 
     if topk is not None:
-        val, idx = torch.topk(std.abs(), k=topk, dim=0)
+        val, idx = ops.topk(std.abs(), k=topk, dim=0)
     else:
-        idx = torch.where(zstd > zscore)[0]
+        idx = ops.where(zstd > zscore)[0]
 
     return idx
 
@@ -126,27 +131,12 @@ def replace_linear(
     copy_weights=False,
     post_processing_function=None,
 ):
-    """
-    Replace linear modules with a new Linear module.
-    Parameters:
-        model (`torch.nn.Module`):
-            Input model or `torch.nn.Module` as the function is run recursively.
-        linear_replacement (`torch.nn.Module`):
-            The linear module that replaces the old one. Only expects standard arguments.
-            If other arguments need to be passed, use a lambda.
-        skip_modules (`List[str]`, *optional*, defaults to `lm_head`):
-            List of modules names not to convert. Defaults to `lm_head`.
-        copy_weights (`bool`):
-            Copy the weights from the old linear module to the new one
-        post_processing_function (`str`):
-            A function name of the replacement linear class that is called
-            after processing.
-    """
+
     for name, module in model.named_children():
         if len(list(module.children())) > 0:
             replace_linear(module, linear_replacement, skip_modules, copy_weights, post_processing_function)
 
-        if isinstance(module, torch.nn.Linear) and name not in skip_modules:
+        if isinstance(module, nn.Linear) and name not in skip_modules:
             old_module = model._modules[name]
             model._modules[name] = linear_replacement(
                 module.in_features,
@@ -165,15 +155,6 @@ def replace_linear(
 
 
 def pack_dict_to_tensor(source_dict):
-    """
-    Pack a dictionary into a torch tensor for storing quant_state items in state_dict.
-
-    Parameters:
-    - source_dict: The dictionary to be packed.
-
-    Returns:
-    A torch tensor containing the packed data.
-    """
     json_str = json.dumps(source_dict)
     json_bytes = json_str.encode("utf-8")
     tensor_data = mindspore.tensor(list(json_bytes), dtype=mindspore.uint8)
@@ -182,15 +163,6 @@ def pack_dict_to_tensor(source_dict):
 
 
 def unpack_tensor_to_dict(tensor_data):
-    """
-    Unpack a torch tensor into a Python dictionary.
-
-    Parameters:
-    - tensor_data: The torch tensor containing the packed data.
-
-    Returns:
-    A Python dictionary containing the unpacked data.
-    """
     json_bytes = bytes(tensor_data.cpu().numpy())
     json_str = json_bytes.decode("utf-8")
     unpacked_dict = json.loads(json_str)

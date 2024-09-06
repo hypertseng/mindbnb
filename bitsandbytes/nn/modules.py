@@ -471,7 +471,7 @@ class Linear8bitLt(nn.Linear):
             CB, CBt, SCB, SCBt, coo_tensorB = bnb.functional.double_quant(B)
             del CBt
             del SCBt
-            param.set_data(CB)
+            ops.assign(param, CB)
             param.CB = CB
             param.SCB = SCB
 
@@ -495,7 +495,7 @@ class Linear8bitLt(nn.Linear):
                 # we converted 8-bit row major to turing/ampere format in the first inference pass
                 # we no longer need the row-major weight
                 del self.state.CB
-                self.weight = self.weight.assign_value(self.state.CxB)
+                self.weight = ops.assign(self.weight, self.state.CxB)
         return out
 
 
