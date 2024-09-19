@@ -11,4 +11,4 @@ pip install -r requirements-dev.txt
 cmake -DCOMPUTE_BACKEND=cuda -S .
 
 # 构建项目
-make
+make -j4

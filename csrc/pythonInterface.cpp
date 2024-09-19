@@ -514,31 +514,22 @@ extern "C"
 
 	int custom_cget_col_row_stats(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 8 && nparam != 7)
+		if (nparam != 8)
 			return 1;
 
 		half *A = static_cast<half *>(params[0]);
 		float *rowStats = static_cast<float *>(params[1]);
 		float *colStats = static_cast<float *>(params[2]);
-		int *nnz_count_row = nullptr;
 
 		void *nnz_threshold_ptr, *rows_ptr, *cols_ptr;
 		cudaMallocHost(&nnz_threshold_ptr, sizeof(float));
 		cudaMallocHost(&rows_ptr, sizeof(int));
 		cudaMallocHost(&cols_ptr, sizeof(int));
 
-		if (nparam == 7)
-		{
-			cudaMemcpy(nnz_threshold_ptr, params[3], sizeof(float), cudaMemcpyDeviceToHost);
-			cudaMemcpy(rows_ptr, params[4], sizeof(int), cudaMemcpyDeviceToHost);
-			cudaMemcpy(cols_ptr, params[5], sizeof(int), cudaMemcpyDeviceToHost);
-		}
-		else{
-			int *nnz_count_row = static_cast<int *>(params[3]);
-			cudaMemcpy(nnz_threshold_ptr, params[4], sizeof(float), cudaMemcpyDeviceToHost);
-			cudaMemcpy(rows_ptr, params[5], sizeof(int), cudaMemcpyDeviceToHost);
-			cudaMemcpy(cols_ptr, params[6], sizeof(int), cudaMemcpyDeviceToHost);
-		}
+		int *nnz_count_row = static_cast<int *>(params[3]);
+		cudaMemcpy(nnz_threshold_ptr, params[4], sizeof(float), cudaMemcpyDeviceToHost);
+		cudaMemcpy(rows_ptr, params[5], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(cols_ptr, params[6], sizeof(int), cudaMemcpyDeviceToHost);
 
 		auto nnz_threshold = *static_cast<float *>(nnz_threshold_ptr);
 		auto rows = *static_cast<int *>(rows_ptr);
@@ -551,7 +542,7 @@ extern "C"
 
 	int custom_cdouble_rowcol_quant(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 13 && nparam != 9)
+		if (nparam != 13)
 			return 1;
 
 		half *A = static_cast<half *>(params[0]);
@@ -559,31 +550,20 @@ extern "C"
 		float *colStats = static_cast<float *>(params[2]);
 		char *out_col_normed = static_cast<char *>(params[3]);
 		char *out_row_normed = static_cast<char *>(params[4]);
-		int *rowidx = nullptr;
-		int *colidx = nullptr;
-		half *val = nullptr;
-		int *nnz_row_ptr = nullptr;
 
 		void *threshold_ptr, *rows_ptr, *cols_ptr;
 		cudaMallocHost(&threshold_ptr, sizeof(float));
 		cudaMallocHost(&rows_ptr, sizeof(int));
 		cudaMallocHost(&cols_ptr, sizeof(int));
-		if (nparam == 9)
-		{
-			cudaMemcpy(threshold_ptr, params[5], sizeof(float), cudaMemcpyDeviceToHost);
-			cudaMemcpy(rows_ptr, params[6], sizeof(int), cudaMemcpyDeviceToHost);
-			cudaMemcpy(cols_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
-		}
-		else
-		{
-			int *rowidx = static_cast<int *>(params[5]);
-			int *colidx = static_cast<int *>(params[6]);
-			half *val = static_cast<half *>(params[7]);
-			int *nnz_row_ptr = static_cast<int *>(params[8]);
-			cudaMemcpy(threshold_ptr, params[9], sizeof(float), cudaMemcpyDeviceToHost);
-			cudaMemcpy(rows_ptr, params[10], sizeof(int), cudaMemcpyDeviceToHost);
-			cudaMemcpy(cols_ptr, params[11], sizeof(int), cudaMemcpyDeviceToHost);
-		}
+
+		int *rowidx = static_cast<int *>(params[5]);
+		int *colidx = static_cast<int *>(params[6]);
+		half *val = static_cast<half *>(params[7]);
+		int *nnz_row_ptr = static_cast<int *>(params[8]);
+		cudaMemcpy(threshold_ptr, params[9], sizeof(float), cudaMemcpyDeviceToHost);
+		cudaMemcpy(rows_ptr, params[10], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(cols_ptr, params[11], sizeof(int), cudaMemcpyDeviceToHost);
+
 		auto threshold = *static_cast<float *>(threshold_ptr);
 		auto rows = *static_cast<int *>(rows_ptr);
 		auto cols = *static_cast<int *>(cols_ptr);
@@ -713,45 +693,6 @@ extern "C"
 		return 0;
 	}
 
-	// int custom_ctransform_turing2row(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
-	// {
-	// 	if (nparam != 5)
-	// 		return 1;
-
-	// 	char *A = static_cast<char *>(params[0]);
-	// 	char *out = static_cast<char *>(params[1]);
-	//  void *rows_ptr, *cols_ptr;
-	//  cudaMallocHost(&rows_ptr, sizeof(int));
-	//  cudaMallocHost(&cols_ptr, sizeof(int));
-	//  cudaMemcpy(rows_ptr, params[2], sizeof(int), cudaMemcpyDeviceToHost);
-	//  cudaMemcpy(cols_ptr, params[3], sizeof(int), cudaMemcpyDeviceToHost);
-	//  int rows = *static_cast<int *>(rows_ptr);
-	//  int cols = *static_cast<int *>(cols_ptr);
-
-	// 	transform_turing2row32T(A, out, rows, cols);
-
-	// 	return 0;
-	// }		
-
-	// int custom_ctransform_ampere2row(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
-	// {
-	// 	if (nparam != 5)
-	// 		return 1;
-
-	// 	char *A = static_cast<char *>(params[0]);
-	// 	char *out = static_cast<char *>(params[1]);
-	//  void *rows_ptr, *cols_ptr;
-	//  cudaMallocHost(&rows_ptr, sizeof(int));
-	//  cudaMallocHost(&cols_ptr, sizeof(int));
-	//  cudaMemcpy(rows_ptr, params[2], sizeof(int), cudaMemcpyDeviceToHost);
-	//  cudaMemcpy(cols_ptr, params[3], sizeof(int), cudaMemcpyDeviceToHost);
-	//  int rows = *static_cast<int *>(rows_ptr);
-	//  int cols = *static_cast<int *>(cols_ptr);	
-
-	// 	transform_ampere2row32T(A, out, rows, cols);
-
-	// 	return 0;
-	// }
 
 	int custom_cextractOutliers_turing (int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
@@ -803,7 +744,7 @@ extern "C"
 
 	int custom_cigemmlt_turing_32(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 11)
+		if (nparam != 12)
 			return 1;
 
 		get_context();
@@ -820,25 +761,25 @@ extern "C"
 		int8_t *A = static_cast<int8_t *>(params[3]);
 		int8_t *B = static_cast<int8_t *>(params[4]);
 		void *C = params[5];
-		float *row_scale = nullptr;
+		float *row_scale = static_cast<float *>(params[6]);
 		cudaMallocHost(&lda_ptr, sizeof(int));
 		cudaMallocHost(&ldb_ptr, sizeof(int));
 		cudaMallocHost(&ldc_ptr, sizeof(int));
-		cudaMemcpy(lda_ptr, params[6], sizeof(int), cudaMemcpyDeviceToHost);
-		cudaMemcpy(ldb_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
-		cudaMemcpy(ldc_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(lda_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(ldb_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(ldc_ptr, params[9], sizeof(int), cudaMemcpyDeviceToHost);
 		int lda = *static_cast<int *>(lda_ptr);
 		int ldb = *static_cast<int *>(ldb_ptr);
 		int ldc = *static_cast<int *>(ldc_ptr);
 		int has_error = igemmlt_turing_32((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
-		params[9] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
+		params[10] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
 
 		return 0;
 	}
 
 	int custom_cigemmlt_turing_8(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 11)
+		if (nparam != 12)
 			return 1;
 
 		get_context();
@@ -855,25 +796,25 @@ extern "C"
 		int8_t *A = static_cast<int8_t *>(params[3]);
 		int8_t *B = static_cast<int8_t *>(params[4]);
 		void *C = params[5];
-		float *row_scale = nullptr;
+		float *row_scale = static_cast<float *>(params[6]);
 		cudaMallocHost(&lda_ptr, sizeof(int));
 		cudaMallocHost(&ldb_ptr, sizeof(int));
 		cudaMallocHost(&ldc_ptr, sizeof(int));
-		cudaMemcpy(lda_ptr, params[6], sizeof(int), cudaMemcpyDeviceToHost);
-		cudaMemcpy(ldb_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
-		cudaMemcpy(ldc_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(lda_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(ldb_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(ldc_ptr, params[9], sizeof(int), cudaMemcpyDeviceToHost);
 		int lda = *static_cast<int *>(lda_ptr);
 		int ldb = *static_cast<int *>(ldb_ptr);
 		int ldc = *static_cast<int *>(ldc_ptr);
 		int has_error = igemmlt_turing_8((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
-		params[9] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
+		params[10] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
 
 		return 0;
 	}
 
 	int custom_cigemmlt_ampere_32(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 11)
+		if (nparam != 12)
 			return 1;
 
 		get_context();
@@ -890,25 +831,25 @@ extern "C"
 		int8_t *A = static_cast<int8_t *>(params[3]);
 		int8_t *B = static_cast<int8_t *>(params[4]);
 		void *C = params[5];
-		float *row_scale = nullptr;
+		float *row_scale = static_cast<float *>(params[6]);
 		cudaMallocHost(&lda_ptr, sizeof(int));
 		cudaMallocHost(&ldb_ptr, sizeof(int));
 		cudaMallocHost(&ldc_ptr, sizeof(int));
-		cudaMemcpy(lda_ptr, params[6], sizeof(int), cudaMemcpyDeviceToHost);
-		cudaMemcpy(ldb_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
-		cudaMemcpy(ldc_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(lda_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(ldb_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(ldc_ptr, params[9], sizeof(int), cudaMemcpyDeviceToHost);
 		int lda = *static_cast<int *>(lda_ptr);
 		int ldb = *static_cast<int *>(ldb_ptr);
 		int ldc = *static_cast<int *>(ldc_ptr);
 		int has_error = igemmlt_ampere_32((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
-		params[9] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
+		params[10] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
 
 		return 0;
 	}
 
 	int custom_cigemmlt_ampere_8(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 11)
+		if (nparam != 12)
 			return 1;
 
 		get_context();
@@ -925,25 +866,25 @@ extern "C"
 		int8_t *A = static_cast<int8_t *>(params[3]);
 		int8_t *B = static_cast<int8_t *>(params[4]);
 		void *C = params[5];
-		float *row_scale = nullptr;
+		float *row_scale = static_cast<float *>(params[6]);
 		cudaMallocHost(&lda_ptr, sizeof(int));
 		cudaMallocHost(&ldb_ptr, sizeof(int));
 		cudaMallocHost(&ldc_ptr, sizeof(int));
-		cudaMemcpy(lda_ptr, params[6], sizeof(int), cudaMemcpyDeviceToHost);
-		cudaMemcpy(ldb_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
-		cudaMemcpy(ldc_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(lda_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(ldb_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(ldc_ptr, params[9], sizeof(int), cudaMemcpyDeviceToHost);
 		int lda = *static_cast<int *>(lda_ptr);
 		int ldb = *static_cast<int *>(ldb_ptr);
 		int ldc = *static_cast<int *>(ldc_ptr);
 		int has_error = igemmlt_ampere_8((cublasLtHandle_t)CUBLAS_CONTEXT->m_handle, m, n, k, A, B, C, row_scale, lda, ldb, ldc);
-		params[9] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
+		params[10] = static_cast<void *>(reinterpret_cast<void *>(static_cast<uintptr_t>(has_error)));
 
 		return 0;
 	}
 
 	int custom_cdequant_mm_int32_fp16(int nparam, void **params, int *ndims, int64_t **shapes, const char **dtypes, void *stream, void *extra)
 	{
-		if (nparam != 10 && nparam != 9)
+		if (nparam != 10)
 			return 1;
 		int *A = static_cast<int *>(params[0]);
 		float *rowStats = static_cast<float *>(params[1]);
@@ -951,21 +892,13 @@ extern "C"
 		half *out = static_cast<half *>(params[3]);
 		float *newRowStats = static_cast<float *>(params[4]);
 		float *newcolStats = static_cast<float *>(params[5]);
-		half *bias = nullptr;
 		void *row_ptr, *col_ptr;
 		cudaMallocHost(&row_ptr, sizeof(int));
 		cudaMallocHost(&col_ptr, sizeof(int));
-		if (nparam == 10)
-		{
-			bias = static_cast<half *>(params[6]);
-			cudaMemcpy(row_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
-			cudaMemcpy(col_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
-		}
-		else
-		{
-			cudaMemcpy(row_ptr, params[6], sizeof(int), cudaMemcpyDeviceToHost);
-			cudaMemcpy(col_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
-		}
+		half *bias = static_cast<half *>(params[6]);
+		cudaMemcpy(row_ptr, params[7], sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(col_ptr, params[8], sizeof(int), cudaMemcpyDeviceToHost);
+
 		int numRows = *static_cast<int *>(row_ptr);
 		int numCols = *static_cast<int *>(col_ptr);
 		dequant_mm_int32_fp16(A, rowStats, colStats, out, newRowStats, newcolStats, bias, numRows, numCols);

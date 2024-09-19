@@ -405,7 +405,7 @@ class MatMul8bitLt(nn.Cell):
         if coo_tensorA is not None and not state.has_fp16_weights:
             # extract outliers
 
-            outlier_idx = ops.unique(coo_tensorA.colidx)
+            outlier_idx, _ = ops.unique(coo_tensorA.colidx)
             state.idx = outlier_idx
             # state.outlier_pool.add_outliers(outlier_idx, A.shape[-1])
             # if state.use_pool and state.outlier_pool.model_dim == A.shape[-1]:

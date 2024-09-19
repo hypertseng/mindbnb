@@ -2340,7 +2340,7 @@ def get_colrow_absmax(A, row_stats=None, col_stats=None, nnz_block_ptr=None, thr
     bnbop.cget_col_row_stats(A, row_stats, col_stats, nnz_block_ptr, threshold, rows, cols)
 
     if threshold > 0.0:
-        nnz_block_ptr.cumsum_(0)
+        nnz_block_ptr = nnz_block_ptr.cumsum(axis=0)
 
     return row_stats, col_stats, nnz_block_ptr
 

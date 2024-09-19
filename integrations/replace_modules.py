@@ -1,7 +1,9 @@
 import logging
+import mindspore
 from mindnlp.core import nn
 from mindnlp.core.nn import Conv1d
 
+from bitsandbytes.nn.modules import Int8Params
 import bitsandbytes as bnb
 
 logger = logging.getLogger(__name__)
@@ -42,13 +44,23 @@ def _replace_with_bnb_linear(
                     in_features = module.in_features
                     out_features = module.out_features
 
+                weight = model._modules[name].weight.clone() 
+                bias = model._modules[name].bias.clone() if model._modules[name].bias is not None else None
+
                 # Replace with MindSpore equivalent or custom module
                 model._modules[name] = bnb.nn.Linear8bitLt(
                     in_features,
                     out_features,
                     has_fp16_weights=llm_int8_has_fp16_weight,
                     threshold=llm_int8_threshold,
-                ) 
+                )
+                
+                model._modules[name].weight = Int8Params(weight.data, 
+                                                         requires_grad=llm_int8_has_fp16_weight, 
+                                                         has_fp16_weights=llm_int8_has_fp16_weight)
+                if bias is not None:
+                    model._modules[name].bias = mindspore.Parameter(bias)
+
                 model._modules[name].quant()
                 has_been_replaced = True
 
