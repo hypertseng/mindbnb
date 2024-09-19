@@ -15,7 +15,7 @@
 '''
     mindbnb modules
 '''
-# pylint: disable=E0611, E0401
+# pylint: disable=E0611, E0401, W1113
 import copy
 from typing import TypeVar
 
@@ -49,12 +49,12 @@ class Int8Params(mindspore.Parameter):
 
     def __new__(
         cls,
-        *args,
         data=None,
         requires_grad=True,
         has_fp16_weights=False,
         CB=None,
         SCB=None,
+        *args,
         **kwargs,
     ):
         if data is None:
