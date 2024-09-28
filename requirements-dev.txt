@@ -7,4 +7,3 @@ scipy~=1.13.0
 pandas~=2.2.2
 matplotlib~=3.9.1
 mindspore>=2.3
-mindnlp>=0.4
