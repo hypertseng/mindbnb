@@ -1,6 +1,6 @@
 # MindBNB
 
-quantization for mindnlp，本repo修改自经典的量化库bitsandbytes https://github.com/bitsandbytes-foundation/bitsandbytes，对齐mindspore生态进行了移植，在layer层面继承mindspore NLP中的mindnlp.core.nn.Linear实现了8bit量化层Linear8bitLt。
+quantization for mindnlp，本repo修改自经典的量化库bitsandbytes https://github.com/bitsandbytes-foundation/bitsandbytes ，对齐mindspore生态进行了移植，在layer层面继承mindspore NLP中的mindnlp.core.nn.Linear实现了8bit量化层Linear8bitLt。
 
 ## Setup
 
